@@ -25,6 +25,7 @@ add_library(CommonLibSF STATIC ${COMMONLIBSF_SOURCES})
 target_include_directories(CommonLibSF
     PUBLIC
         "${COMMONLIBSF_DIR}/include"
+        "${COMMONLIBSF_DIR}/lib/commonlib-shared/include"
         "${COMMONLIBSF_DIR}/lib/REX/include"
         ${BINARY_IO_INCLUDE_DIRS}
     PRIVATE
