@@ -1,0 +1,7 @@
+<fomod>
+  <Name>DynamicSunAttenuation (SFSE)</Name>
+  <Author>Starfield Modding Community</Author>
+  <Version>1.1.0</Version>
+  <Description>Atenuación dinámica del disco solar, Sun Glare Alpha y luz direccional según la distancia euclidiana entre la nave del jugador y la estrella central del sistema, con diagnóstico RTTI integrado para RE::Sky.</Description>
+  <Website>https://github.com/libxse/commonlibsf</Website>
+</fomod>
