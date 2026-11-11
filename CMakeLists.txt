@@ -9,35 +9,37 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-
+find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_path(SIMPLEINI_INCLUDE_DIRS "SimpleIni.h" REQUIRED)
+find_path(BINARY_IO_INCLUDE_DIRS "binary_io/binary_io.hpp" REQUIRED)
 
-# Resolucion flexible de CommonLibSF:
-# 1) Submodulo local en extern/CommonLibSF
-# 2) Variable de entorno CommonLibSFPath (tu copia local de libxse/commonlibsf)
-# 3) Paquete preinstalado (find_package)
-# 4) Descarga automatica via FetchContent
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/CommonLibSF/CMakeLists.txt")
-    message(STATUS "Usando CommonLibSF local desde extern/CommonLibSF")
-    add_subdirectory(extern/CommonLibSF)
-elseif(DEFINED ENV{CommonLibSFPath} AND EXISTS "$ENV{CommonLibSFPath}/CMakeLists.txt")
-    message(STATUS "Usando CommonLibSF desde CommonLibSFPath: $ENV{CommonLibSFPath}")
-    add_subdirectory("$ENV{CommonLibSFPath}" "${CMAKE_BINARY_DIR}/_deps/commonlibsf")
-else()
-    find_package(CommonLibSF CONFIG QUIET)
-    if(NOT CommonLibSF_FOUND)
-        message(STATUS "Descargando libxse/commonlibsf via FetchContent...")
-        include(FetchContent)
-        FetchContent_Declare(
-            CommonLibSF
-            GIT_REPOSITORY https://github.com/libxse/commonlibsf.git
-            GIT_TAG        main
-            GIT_SHALLOW    TRUE
-        )
-        FetchContent_MakeAvailable(CommonLibSF)
-    endif()
+set(COMMONLIBSF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/CommonLibSF")
+if(NOT EXISTS "${COMMONLIBSF_DIR}/include/RE/Starfield.h")
+    message(FATAL_ERROR "No se encontro CommonLibSF en ${COMMONLIBSF_DIR}")
+endif()
+
+file(GLOB_RECURSE COMMONLIBSF_SOURCES CONFIGURE_DEPENDS "${COMMONLIBSF_DIR}/src/*.cpp")
+
+add_library(CommonLibSF STATIC ${COMMONLIBSF_SOURCES})
+target_include_directories(CommonLibSF
+    PUBLIC
+        "${COMMONLIBSF_DIR}/include"
+        ${BINARY_IO_INCLUDE_DIRS}
+    PRIVATE
+        "${COMMONLIBSF_DIR}/src"
+)
+target_link_libraries(CommonLibSF
+    PUBLIC
+        fmt::fmt
+        spdlog::spdlog
+        Version.lib
+        Dbghelp.lib
+)
+
+if(MSVC)
+    target_compile_options(CommonLibSF PRIVATE /utf-8 /permissive- /W0 /EHa /MP /Zc:preprocessor)
+    target_compile_definitions(CommonLibSF PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
 
 set(HEADERS
@@ -68,14 +70,9 @@ target_include_directories(${PROJECT_NAME}
         ${SIMPLEINI_INCLUDE_DIRS}
 )
 
-if(TARGET CommonLibSF::CommonLibSF)
-    target_link_libraries(${PROJECT_NAME} PRIVATE CommonLibSF::CommonLibSF)
-else()
-    target_link_libraries(${PROJECT_NAME} PRIVATE CommonLibSF)
-endif()
-
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
+        CommonLibSF
         spdlog::spdlog
 )
 
@@ -91,7 +88,7 @@ if(MSVC)
             /permissive-
             /W4
             /WX-
-            /EHsc
+            /EHa
             /MP
             /Zc:preprocessor
             /external:anglebrackets
@@ -113,7 +110,6 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/package/Data/SFSE/Plugins"
 )
 
-# Copia el INI junto a la DLL compilada dentro de build/.../package/Data/SFSE/Plugins/
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/dist/Data/SFSE/Plugins/${PROJECT_NAME}.ini"
@@ -121,7 +117,6 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMENT "Preparando paquete mod en $<TARGET_FILE_DIR:${PROJECT_NAME}>"
 )
 
-# Copia automatica directa a la instalacion de Starfield / MO2 si SFPath esta definido
 if(DEFINED ENV{SFPath})
     set(SF_PLUGIN_DIR "$ENV{SFPath}/Data/SFSE/Plugins")
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
