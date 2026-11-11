@@ -14,8 +14,6 @@ find_package(spdlog CONFIG REQUIRED)
 find_path(SIMPLEINI_INCLUDE_DIRS "SimpleIni.h" REQUIRED)
 find_path(BINARY_IO_INCLUDE_DIRS "binary_io/binary_io.hpp" REQUIRED)
 
-find_path(BINARY_IO_INCLUDE_DIRS "binary_io/binary_io.hpp" REQUIRED)
-
 set(COMMONLIBSF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/CommonLibSF")
 if(NOT EXISTS "${COMMONLIBSF_DIR}/include/RE/Starfield.h")
     message(FATAL_ERROR "No se encontro CommonLibSF en ${COMMONLIBSF_DIR}")
@@ -51,9 +49,6 @@ if(MSVC)
     target_compile_options(CommonLibSF PRIVATE /utf-8 /permissive- /W0 /EHa /MP /Zc:preprocessor)
     target_compile_definitions(CommonLibSF PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
-
-set(HEADERS
-
 
 set(HEADERS
     include/PCH.h
