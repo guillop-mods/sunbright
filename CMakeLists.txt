@@ -14,6 +14,8 @@ find_package(spdlog CONFIG REQUIRED)
 find_path(SIMPLEINI_INCLUDE_DIRS "SimpleIni.h" REQUIRED)
 find_path(BINARY_IO_INCLUDE_DIRS "binary_io/binary_io.hpp" REQUIRED)
 
+find_path(BINARY_IO_INCLUDE_DIRS "binary_io/binary_io.hpp" REQUIRED)
+
 set(COMMONLIBSF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/CommonLibSF")
 if(NOT EXISTS "${COMMONLIBSF_DIR}/include/RE/Starfield.h")
     message(FATAL_ERROR "No se encontro CommonLibSF en ${COMMONLIBSF_DIR}")
@@ -25,10 +27,18 @@ add_library(CommonLibSF STATIC ${COMMONLIBSF_SOURCES})
 target_include_directories(CommonLibSF
     PUBLIC
         "${COMMONLIBSF_DIR}/include"
+        "${COMMONLIBSF_DIR}/lib/REX/include"
         ${BINARY_IO_INCLUDE_DIRS}
     PRIVATE
         "${COMMONLIBSF_DIR}/src"
 )
+
+if(EXISTS "${COMMONLIBSF_DIR}/include/SFSE/Impl/PCH.h")
+    target_precompile_headers(CommonLibSF PRIVATE "${COMMONLIBSF_DIR}/include/SFSE/Impl/PCH.h")
+elseif(EXISTS "${COMMONLIBSF_DIR}/src/PCH.h")
+    target_precompile_headers(CommonLibSF PRIVATE "${COMMONLIBSF_DIR}/src/PCH.h")
+endif()
+
 target_link_libraries(CommonLibSF
     PUBLIC
         fmt::fmt
@@ -41,6 +51,9 @@ if(MSVC)
     target_compile_options(CommonLibSF PRIVATE /utf-8 /permissive- /W0 /EHa /MP /Zc:preprocessor)
     target_compile_definitions(CommonLibSF PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
 endif()
+
+set(HEADERS
+
 
 set(HEADERS
     include/PCH.h
