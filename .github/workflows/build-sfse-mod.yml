@@ -1,0 +1,54 @@
+name: Build SFSE Plugin (Windows x64)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout CommonLibSF
+        uses: actions/checkout@v4
+        with:
+          repository: libxse/commonlibsf
+          path: extern/CommonLibSF
+
+      - name: Setup MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup vcpkg environment
+        shell: pwsh
+        run: |
+          if (-not $env:VCPKG_ROOT -and $env:VCPKG_INSTALLATION_ROOT) {
+            $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+          }
+          if (-not $env:VCPKG_ROOT) {
+            throw "VCPKG_ROOT no esta definido en el runner."
+          }
+          "VCPKG_ROOT=$env:VCPKG_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure CMake (Release)
+        run: cmake --preset release
+
+      - name: Build DynamicSunAttenuation.dll
+        run: cmake --build --preset release
+
+      - name: Stage Mod Manager Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/release/package/fomod | Out-Null
+          Copy-Item -Force dist/fomod/info.xml build/release/package/fomod/info.xml
+
+      - name: Upload Installable Starfield Mod Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: DynamicSunAttenuation-SFSE-Mod
+          path: build/release/package/**
