@@ -35,6 +35,12 @@ jobs:
           }
           "VCPKG_ROOT=$env:VCPKG_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Install Ninja and update vcpkg baseline
+        shell: pwsh
+        run: |
+          choco install ninja -y
+          & "$env:VCPKG_ROOT\vcpkg.exe" x-update-baseline --add-initial-baseline
+
       - name: Configure CMake (Release)
         run: cmake --preset release
 
