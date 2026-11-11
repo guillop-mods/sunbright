@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "dynamic-sun-attenuation",
+  "version-string": "1.1.0",
+  "description": "SFSE C++23 plugin for dynamic heliocentric sun glare occlusion and directional light scaling in Starfield.",
+  "dependencies": [
+    "fmt",
+    "rsm-binary-io",
+    "simpleini",
+    "spdlog"
+  ]
+}
