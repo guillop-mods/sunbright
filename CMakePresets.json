@@ -9,7 +9,7 @@
     {
       "name": "win64-base",
       "hidden": true,
-      "generator": "Ninja",
+     "generator": "Visual Studio 17 2022",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "installDir": "${sourceDir}/dist",
       "architecture": {
