@@ -37,7 +37,7 @@ namespace Helios::Hooks
         {
             CheckDiagnosticHotkeyOnMainThread();
 
-            RE::Sky* sky = RE::Sky::GetSingleton();
+            RE::Sky* sky = SunController::GetSkySingleton();
             if (!sky) {
                 return;
             }
@@ -66,8 +66,9 @@ namespace Helios::Hooks
 
             RE::BSEventNotifyControl ProcessEvent(
                 RE::InputEvent* const* a_event,
-                RE::BSTEventSource<RE::InputEvent*>*) override
+                RE::BSTEventSource<RE::InputEvent*>* a_source) override
             {
+                (void)a_source;
                 if (!a_event || !*a_event) {
                     return RE::BSEventNotifyControl::kContinue;
                 }
@@ -84,10 +85,13 @@ namespace Helios::Hooks
 
         void RegisterMappedEventSinks()
         {
-            if constexpr (requires { RE::BSInputDeviceManager::GetSingleton(); }) {
+            if constexpr (requires {
+                RE::BSInputDeviceManager::GetSingleton();
+                RE::BSInputDeviceManager::GetSingleton()->AddEventSink(InputDiagnosticSink::GetSingleton());
+            }) {
                 if (auto* inputMgr = RE::BSInputDeviceManager::GetSingleton()) {
                     inputMgr->AddEventSink(InputDiagnosticSink::GetSingleton());
-                    logger::info("Sink de entrada registrado en RE::BSInputDeviceManager.");
+                    spdlog::info("Sink de entrada registrado en RE::BSInputDeviceManager.");
                 }
             }
         }
@@ -96,7 +100,7 @@ namespace Helios::Hooks
         {
             const auto* taskInterface = SFSE::GetTaskInterface();
             if (!taskInterface) {
-                logger::error("No se pudo obtener SFSE::GetTaskInterface() para el modo de respaldo.");
+                spdlog::error("No se pudo obtener SFSE::GetTaskInterface() para el modo de respaldo.");
                 return;
             }
 
@@ -133,7 +137,12 @@ namespace Helios::Hooks
                             const float dt = std::chrono::duration<float>(now - g_lastTickTime).count();
                             g_lastTickTime = now;
 
-                            ProcessFrameTickOnMainThread(RE::PlayerCharacter::GetSingleton(), dt);
+                            RE::PlayerCharacter* player = nullptr;
+                            if constexpr (requires { RE::PlayerCharacter::GetSingleton(); }) {
+                                player = RE::PlayerCharacter::GetSingleton();
+                            }
+
+                            ProcessFrameTickOnMainThread(player, dt);
                             g_taskInFlight.store(false);
                         });
                     } else {
@@ -142,7 +151,7 @@ namespace Helios::Hooks
                 }
             });
 
-            logger::info("Bucle de actualizacion en hilo principal iniciado via SFSE::GetTaskInterface()->AddTask().");
+            spdlog::info("Bucle de actualizacion en hilo principal iniciado via SFSE::GetTaskInterface()->AddTask().");
         }
     }
 
@@ -172,7 +181,7 @@ namespace Helios::Hooks
                 g_originalPlayerUpdate = reinterpret_cast<PlayerUpdateFn>(originalAddr);
                 g_vtableHookInstalled.store(true);
 
-                logger::info(
+                spdlog::info(
                     "Hook instalado en RE::PlayerCharacter::VTABLE[0] slot 0x{:X} (original=0x{:016X}).",
                     hookCfg.playerUpdateVfuncIdx,
                     originalAddr);
@@ -182,13 +191,13 @@ namespace Helios::Hooks
 
         // 2. Respaldo automatico sin indices hardcoded: TaskInterface + BSInputDeviceManager
         if (hookCfg.useTaskFallbackWhenUnset) {
-            logger::info(
-                "uPlayerUpdateVfuncIdx=0: activando respaldo seguro con SFSE::GetTaskInterface() y RE::Sky::GetSingleton().");
+            spdlog::info(
+                "uPlayerUpdateVfuncIdx=0: activando respaldo seguro con SFSE::GetTaskInterface() y SunController::GetSkySingleton().");
             StartTaskInterfaceLoop();
             return true;
         }
 
-        logger::warn("No se instalo ningun hook de actualizacion (uPlayerUpdateVfuncIdx=0 y respaldo desactivado).");
+        spdlog::warn("No se instalo ningun hook de actualizacion (uPlayerUpdateVfuncIdx=0 y respaldo desactivado).");
         return false;
     }
 
