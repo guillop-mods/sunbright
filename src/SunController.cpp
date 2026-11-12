@@ -2,6 +2,7 @@
 #include "SkyDiagnostics.h"
 
 #include <cctype>
+#include <type_traits>
 
 namespace Helios
 {
@@ -23,12 +24,105 @@ namespace Helios
 
             return it != a_haystack.end();
         }
+
+        template <typename PtrT>
+        [[nodiscard]] auto* UnwrapRawPtr(const PtrT& a_ptr) noexcept
+        {
+            using Decayed = std::decay_t<PtrT>;
+            if constexpr (std::is_pointer_v<Decayed>) {
+                return a_ptr;
+            } else if constexpr (requires { a_ptr.get(); }) {
+                return a_ptr.get();
+            } else {
+                return static_cast<void*>(nullptr);
+            }
+        }
+
+        [[nodiscard]] RE::TESObjectCELL* TryGetCellFromPlayerOrShip(
+            RE::PlayerCharacter* a_player,
+            RE::TESObjectREFR* a_shipRef) noexcept
+        {
+            if (a_player) {
+                if constexpr (requires(RE::PlayerCharacter* p) { p->GetParentCell(); }) {
+                    if (auto* cell = UnwrapRawPtr(a_player->GetParentCell())) {
+                        return cell;
+                    }
+                } else if constexpr (requires(RE::PlayerCharacter* p) { p->parentCell; }) {
+                    if (auto* cell = UnwrapRawPtr(a_player->parentCell)) {
+                        return cell;
+                    }
+                }
+            }
+
+            if (a_shipRef) {
+                if constexpr (requires(RE::TESObjectREFR* r) { r->GetParentCell(); }) {
+                    if (auto* cell = UnwrapRawPtr(a_shipRef->GetParentCell())) {
+                        return cell;
+                    }
+                } else if constexpr (requires(RE::TESObjectREFR* r) { r->parentCell; }) {
+                    if (auto* cell = UnwrapRawPtr(a_shipRef->parentCell)) {
+                        return cell;
+                    }
+                }
+            }
+
+            return nullptr;
+        }
     }
 
     SunController* SunController::GetSingleton() noexcept
     {
         static SunController instance;
         return &instance;
+    }
+
+    RE::Sky* SunController::GetSkySingleton() noexcept
+    {
+        if constexpr (requires { RE::Sky::GetSingleton(); }) {
+            return RE::Sky::GetSingleton();
+        } else {
+            const auto& reloc = Config::GetSingleton()->GetRelocations();
+            std::uintptr_t targetAddr = 0;
+
+            if (reloc.skySingletonRelId > 0) {
+                const REL::Relocation<std::uintptr_t> loc{ REL::ID(reloc.skySingletonRelId) };
+                targetAddr = loc.address();
+            } else if (reloc.skySingletonRva > 0) {
+                std::uintptr_t moduleBase = 0;
+                if constexpr (requires { REL::Module::get().base(); }) {
+                    moduleBase = REL::Module::get().base();
+                } else {
+                    moduleBase = reinterpret_cast<std::uintptr_t>(::GetModuleHandleW(nullptr));
+                }
+                if (moduleBase != 0) {
+                    targetAddr = moduleBase + static_cast<std::uintptr_t>(reloc.skySingletonRva);
+                }
+            }
+
+            if (targetAddr == 0) {
+                static std::atomic<bool> loggedMissingReloc{ false };
+                if (!loggedMissingReloc.exchange(true)) {
+                    spdlog::warn(
+                        "[SkySingleton] Configura [Relocation] uSkySingletonRelID o uSkySingletonRVA en "
+                        "DynamicSunAttenuation.ini para resolver la instancia de RE::Sky.");
+                }
+                return nullptr;
+            }
+
+            // 1. Primero comprobamos si targetAddr apunta directamente a un objeto Sky en memoria estatica
+            if (const auto directRtti = Diagnostics::ResolveObjectRtti(targetAddr);
+                directRtti.hasMsvcRtti && ContainsCaseInsensitive(directRtti.cleanName, "Sky")) {
+                return reinterpret_cast<RE::Sky*>(targetAddr);
+            }
+
+            // 2. Caso estandar BSTSingletonSDM<Sky>: targetAddr contiene un puntero RE::Sky*
+            std::uint64_t skyPtr = 0;
+            if (Diagnostics::TryReadUInt64(targetAddr, skyPtr) && skyPtr != 0) {
+                return reinterpret_cast<RE::Sky*>(static_cast<std::uintptr_t>(skyPtr));
+            }
+
+            return nullptr;
+        }
     }
 
     void SunController::ResetState() noexcept
@@ -59,7 +153,7 @@ namespace Helios
 
     void SunController::TriggerSkyDump(const char* a_reason)
     {
-        auto* sky = RE::Sky::GetSingleton();
+        auto* sky = GetSkySingleton();
         const auto& diag = Config::GetSingleton()->GetDiagnostics();
         Diagnostics::DumpSkyPadPointers(
             sky,
@@ -80,22 +174,31 @@ namespace Helios
             return false;
         }
 
-        RE::TESObjectCELL* parentCell = a_player->GetParentCell();
-        if (!parentCell) {
-            return false;
-        }
-
         RE::TESObjectREFR* shipRef = nullptr;
         if constexpr (requires(RE::PlayerCharacter* p) { p->GetSpaceship(false); }) {
-            shipRef = a_player->GetSpaceship(false);
+            shipRef = UnwrapRawPtr(a_player->GetSpaceship(false));
         } else if constexpr (requires(RE::PlayerCharacter* p) { p->GetSpaceship(); }) {
-            shipRef = a_player->GetSpaceship();
+            shipRef = UnwrapRawPtr(a_player->GetSpaceship());
         }
 
+        RE::TESObjectCELL* parentCell = TryGetCellFromPlayerOrShip(a_player, shipRef);
         const auto* cfg = Config::GetSingleton();
+
         if (cfg->GetGeneral().enableInSpaceOnly) {
-            if (parentCell->IsInterior()) {
-                return false;
+            if (parentCell) {
+                if constexpr (requires(RE::TESObjectCELL* c) { c->IsInterior(); }) {
+                    if (parentCell->IsInterior()) {
+                        return false;
+                    }
+                }
+            } else if constexpr (requires { RE::TES::GetSingleton(); }) {
+                if (auto* tes = RE::TES::GetSingleton()) {
+                    if constexpr (requires { tes->interiorCell; }) {
+                        if (tes->interiorCell) {
+                            return false;
+                        }
+                    }
+                }
             }
         }
 
@@ -109,50 +212,107 @@ namespace Helios
         RE::Sky* a_sky,
         const RE::NiPoint3& a_shipPos)
     {
-        if (!a_spaceCell) {
-            return std::nullopt;
-        }
-
-        const std::uint32_t cellFormID = a_spaceCell->GetFormID();
-        if (_hasCachedStar && _cachedCellFormID == cellFormID) {
-            return _cachedStarPosition;
-        }
-
-        const auto& spaceCfg = Config::GetSingleton()->GetSpaceDetection();
-        std::optional<RE::NiPoint3> foundStarPos;
-
-        a_spaceCell->ForEachReference([&](RE::TESObjectREFR* a_ref) -> RE::BSContainer::ForEachResult {
-            if (!a_ref) {
-                return RE::BSContainer::ForEachResult::kContinue;
+        if (a_spaceCell) {
+            const std::uint32_t cellFormID = a_spaceCell->GetFormID();
+            if (_hasCachedStar && _cachedCellFormID == cellFormID) {
+                return _cachedStarPosition;
             }
 
-            const auto* baseObj = a_ref->GetBaseObject();
-            const char* editorID = baseObj ? baseObj->GetFormEditorID() : nullptr;
+            const auto& spaceCfg = Config::GetSingleton()->GetSpaceDetection();
+            std::optional<RE::NiPoint3> foundStarPos;
 
-            if (editorID) {
-                if (ContainsCaseInsensitive(editorID, spaceCfg.starEditorIDToken) ||
-                    ContainsCaseInsensitive(editorID, spaceCfg.sunEditorIDToken)) {
-                    foundStarPos = a_ref->GetPosition();
-                    return RE::BSContainer::ForEachResult::kStop;
+            auto inspectRef = [&](RE::TESObjectREFR* a_ref) -> RE::BSContainer::ForEachResult {
+                if (!a_ref) {
+                    return RE::BSContainer::ForEachResult::kContinue;
+                }
+
+                const char* editorID = nullptr;
+                if constexpr (requires(RE::TESObjectREFR* r) { r->GetBaseObject().get(); }) {
+                    if (auto* baseObj = a_ref->GetBaseObject().get()) {
+                        if constexpr (requires { baseObj->GetFormEditorID(); }) {
+                            editorID = baseObj->GetFormEditorID();
+                        }
+                    }
+                } else if constexpr (requires(RE::TESObjectREFR* r) { r->GetBaseObject(); }) {
+                    if (auto* baseObj = UnwrapRawPtr(a_ref->GetBaseObject())) {
+                        if constexpr (requires { baseObj->GetFormEditorID(); }) {
+                            editorID = baseObj->GetFormEditorID();
+                        }
+                    }
+                } else if constexpr (requires(RE::TESObjectREFR* r) { r->data.objectReference; }) {
+                    if (auto* baseObj = UnwrapRawPtr(a_ref->data.objectReference)) {
+                        if constexpr (requires { baseObj->GetFormEditorID(); }) {
+                            editorID = baseObj->GetFormEditorID();
+                        }
+                    }
+                }
+
+                if (editorID) {
+                    if (ContainsCaseInsensitive(editorID, spaceCfg.starEditorIDToken) ||
+                        ContainsCaseInsensitive(editorID, spaceCfg.sunEditorIDToken)) {
+                        if constexpr (requires(RE::TESObjectREFR* r) { r->GetPosition(); }) {
+                            foundStarPos = a_ref->GetPosition();
+                        } else if constexpr (requires(RE::TESObjectREFR* r) { r->data.location; }) {
+                            foundStarPos = a_ref->data.location;
+                        }
+                        return RE::BSContainer::ForEachResult::kStop;
+                    }
+                }
+
+                return RE::BSContainer::ForEachResult::kContinue;
+            };
+
+            if constexpr (requires(RE::TESObjectCELL* c) {
+                c->ForEachReference([](const RE::NiPointer<RE::TESObjectREFR>&) {
+                    return RE::BSContainer::ForEachResult::kContinue;
+                });
+            }) {
+                a_spaceCell->ForEachReference([&](const RE::NiPointer<RE::TESObjectREFR>& a_refPtr) -> RE::BSContainer::ForEachResult {
+                    return inspectRef(a_refPtr.get());
+                });
+            } else if constexpr (requires(RE::TESObjectCELL* c) {
+                c->ForEachReference([](RE::TESObjectREFR*) {
+                    return RE::BSContainer::ForEachResult::kContinue;
+                });
+            }) {
+                a_spaceCell->ForEachReference(inspectRef);
+            } else if constexpr (requires(RE::TESObjectCELL* c) {
+                c->ForEachReference([](RE::TESObjectREFR&) {
+                    return RE::BSContainer::ForEachResult::kContinue;
+                });
+            }) {
+                a_spaceCell->ForEachReference([&](RE::TESObjectREFR& a_ref) -> RE::BSContainer::ForEachResult {
+                    return inspectRef(&a_ref);
+                });
+            } else if constexpr (requires(RE::TESObjectCELL* c) { c->references; }) {
+                for (const auto& refPtr : a_spaceCell->references) {
+                    if (inspectRef(UnwrapRawPtr(refPtr)) == RE::BSContainer::ForEachResult::kStop) {
+                        break;
+                    }
                 }
             }
 
-            return RE::BSContainer::ForEachResult::kContinue;
-        });
+            if (foundStarPos.has_value()) {
+                _hasCachedStar      = true;
+                _cachedCellFormID   = cellFormID;
+                _cachedStarPosition = *foundStarPos;
+                return foundStarPos;
+            }
+        }
 
-        // Respaldo heliocentrico cuando el sol vive en el skybox de RE::Sky sin TESObjectREFR fisico
-        if (!foundStarPos.has_value() && a_sky) {
+        // Respaldo heliocentrico cuando el sol vive en el skybox de RE::Sky o GetParentCell() no esta mapeado
+        if (a_sky) {
             (void)a_shipPos;
-            foundStarPos = RE::NiPoint3{ 0.0f, 0.0f, 0.0f };
+            const RE::NiPoint3 originStar{ 0.0f, 0.0f, 0.0f };
+            if (a_spaceCell) {
+                _hasCachedStar      = true;
+                _cachedCellFormID   = a_spaceCell->GetFormID();
+                _cachedStarPosition = originStar;
+            }
+            return originStar;
         }
 
-        if (foundStarPos.has_value()) {
-            _hasCachedStar      = true;
-            _cachedCellFormID   = cellFormID;
-            _cachedStarPosition = *foundStarPos;
-        }
-
-        return foundStarPos;
+        return std::nullopt;
     }
 
     void SunController::OnPlayerFrameTick(RE::PlayerCharacter* a_player, RE::Sky* a_sky, float a_deltaSeconds)
@@ -161,7 +321,7 @@ namespace Helios
         const auto& general = cfg->GetGeneral();
         const auto& diag    = cfg->GetDiagnostics();
 
-        RE::Sky* sky = a_sky ? a_sky : RE::Sky::GetSingleton();
+        RE::Sky* sky = a_sky ? a_sky : GetSkySingleton();
         if (!sky) {
             return;
         }
@@ -172,7 +332,13 @@ namespace Helios
             return;
         }
 
-        RE::PlayerCharacter* player = a_player ? a_player : RE::PlayerCharacter::GetSingleton();
+        RE::PlayerCharacter* player = a_player;
+        if (!player) {
+            if constexpr (requires { RE::PlayerCharacter::GetSingleton(); }) {
+                player = RE::PlayerCharacter::GetSingleton();
+            }
+        }
+
         RE::TESObjectCELL* spaceCell  = nullptr;
         RE::TESObjectREFR* playerShip = nullptr;
 
@@ -207,6 +373,7 @@ namespace Helios
             } else if constexpr (requires(RE::TESObjectREFR* r) { r->data.location; }) {
                 shipPos = playerShip->data.location;
             }
+
             const auto starPosOpt = ResolveCentralStarPosition(spaceCell, sky, shipPos);
             if (starPosOpt.has_value()) {
                 const float distance = Math::ComputeEuclideanDistance(shipPos, *starPosOpt);
@@ -222,7 +389,7 @@ namespace Helios
                 _smoothedState.directionalLightMult = Math::Lerp(_smoothedState.directionalLightMult, targetState.directionalLightMult, alpha);
 
                 if (general.debugLog) {
-                    logger::debug(
+                    spdlog::debug(
                         "[Helios] Dist={:.1f} | Irr={:.3f} | Occ={:.3f} | Glare={:.3f} | Disk={:.3f} | Light={:.3f}",
                         _smoothedState.distance,
                         _smoothedState.normalizedIrradiance,
