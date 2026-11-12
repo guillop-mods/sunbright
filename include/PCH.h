@@ -3,11 +3,11 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 
-#include <Windows.h>
 
 #include <RE/Starfield.h>
 #include <REL/Relocation.h>
 #include <SFSE/SFSE.h>
+#include <Windows.h>
 
 #include <SimpleIni.h>
 #include <spdlog/sinks/basic_file_sink.h>
