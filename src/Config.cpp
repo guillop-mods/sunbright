@@ -34,6 +34,22 @@ namespace Helios
                 return a_default;
             }
         }
+
+        [[nodiscard]] std::uint64_t ParseHexOrDecUint64(const CSimpleIniA& a_ini, const char* a_section, const char* a_key, std::uint64_t a_default)
+        {
+            const char* raw = a_ini.GetValue(a_section, a_key, nullptr);
+            if (!raw || raw[0] == '\0') {
+                return a_default;
+            }
+
+            try {
+                std::size_t idx = 0;
+                const unsigned long long parsed = std::stoull(raw, &idx, 0);
+                return static_cast<std::uint64_t>(parsed);
+            } catch (...) {
+                return a_default;
+            }
+        }
     }
 
     Config* Config::GetSingleton() noexcept
@@ -49,7 +65,7 @@ namespace Helios
 
         const SI_Error rc = ini.LoadFile(kDefaultIniPath);
         if (rc < 0) {
-            logger::warn("No se encontro '{}'. Se utilizaran los valores por defecto.", kDefaultIniPath);
+            spdlog::warn("No se encontro '{}'. Se utilizaran los valores por defecto.", kDefaultIniPath);
             return;
         }
 
@@ -111,14 +127,20 @@ namespace Helios
             static_cast<std::uint32_t>(0xEB8 / sizeof(std::uintptr_t)));
         _diagnostics.inspectSunCandidates  = ini.GetBoolValue("Diagnostics", "bInspectSunCandidates", _diagnostics.inspectSunCandidates);
 
-        logger::info(
-            "Configuracion cargada: mode={}, d0={:.1f}, dMax={:.1f}, playerVfuncIdx={}, dumpCount={}, hotkeyVK=0x{:X}",
+        // [Relocation]
+        _relocations.skySingletonRelId = ParseHexOrDecUint64(ini, "Relocation", "uSkySingletonRelID", _relocations.skySingletonRelId);
+        _relocations.skySingletonRva   = ParseHexOrDecUint64(ini, "Relocation", "uSkySingletonRVA", _relocations.skySingletonRva);
+
+        spdlog::info(
+            "Configuracion cargada: mode={}, d0={:.1f}, dMax={:.1f}, playerVfuncIdx={}, dumpCount={}, hotkeyVK=0x{:X}, skyRelID={}, skyRVA=0x{:X}",
             static_cast<int>(_attenuation.mode),
             _attenuation.referenceDistance,
             _attenuation.maxFalloffDistance,
             _hooks.playerUpdateVfuncIdx,
             _diagnostics.dumpPointerCount,
-            _diagnostics.dumpHotkeyVK);
+            _diagnostics.dumpHotkeyVK,
+            _relocations.skySingletonRelId,
+            _relocations.skySingletonRva);
     }
 
     void Config::Reload()
